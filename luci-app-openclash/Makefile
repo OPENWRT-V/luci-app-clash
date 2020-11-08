@@ -100,7 +100,6 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/etc/openclash/core
 	$(INSTALL_BIN) ./files/bin/$(ARCH)/clash_tun $(1)/etc/openclash/core/clash_tun
 	$(INSTALL_BIN) ./files/bin/$(ARCH)/clash_game $(1)/etc/openclash/core/clash_game
-	$(INSTALL_BIN) ./files/bin/$(ARCH)/clash_dev $(1)/etc/openclash/core/clash_dev
 endef
 
 $(eval $(call BuildPackage,$(PKG_NAME)))

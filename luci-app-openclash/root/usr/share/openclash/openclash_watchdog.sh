@@ -41,7 +41,8 @@ if [ "$enable" -eq 1 ]; then
 	if ! pidof clash >/dev/null; then
 	   CRASH_NUM=$(expr "$CRASH_NUM" + 1)
 	   if [ "$CRASH_NUM" -le 3 ]; then
-	      CONFIG_FILE=$(uci get openclash.config.config_path 2>/dev/null)
+	      RAW_CONFIG_FILE=$(uci get openclash.config.config_path 2>/dev/null)
+	      CONFIG_FILE="/etc/openclash/$(uci get openclash.config.config_path 2>/dev/null |awk -F '/' '{print $5}' 2>/dev/null)"
 	      echo "${LOGTIME} Watchdog: Clash Core Problem, Restart." >> $LOG_FILE
 	      touch /tmp/openclash.log 2>/dev/null
         chmod o+w /etc/openclash/proxy_provider/* 2>/dev/null
@@ -84,7 +85,10 @@ fi
    last_line=$(iptables -t nat -nL PREROUTING --line-number |awk '{print $1}' 2>/dev/null |awk 'END {print}' |sed -n '$p')
    op_line=$(iptables -t nat -nL PREROUTING --line-number |grep "openclash" 2>/dev/null |awk '{print $1}' 2>/dev/null |head -1)
    if [ "$last_line" != "$op_line" ] && [ -z "$core_type" ]; then
-      iptables -t nat -D PREROUTING -p tcp -j openclash
+      pre_lines=$(iptables -nvL PREROUTING -t nat |sed 1,2d |sed -n '/openclash/=' 2>/dev/null |sort -rn)
+      for pre_line in $pre_lines; do
+         iptables -t nat -D PREROUTING "$pre_line" >/dev/null 2>&1
+      done >/dev/null 2>&1
       iptables -t nat -A PREROUTING -p tcp -j openclash
       echo "$LOGTIME Watchdog: Reset Firewall For Enabling Redirect." >>$LOG_FILE
    fi

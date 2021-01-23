@@ -1,6 +1,7 @@
 #!/bin/sh
 . /lib/functions.sh
 . /usr/share/openclash/openclash_ps.sh
+. /usr/share/openclash/ruby.sh
 
 status=$(unify_ps_status "yml_proxys_set.sh")
 [ "$status" -gt "3" ] && exit 0
@@ -36,6 +37,20 @@ if [ -z "$CONFIG_NAME" ]; then
    CONFIG_NAME="config.yaml"
 fi
 
+yml_other_rules_del()
+{
+	 local section="$1"
+   local enabled config
+   config_get_bool "enabled" "$section" "enabled" "1"
+   config_get "config" "$section" "config" ""
+   config_get "rule_name" "$section" "rule_name" ""
+   
+   if [ "$enabled" = "0" ] || [ "$config" != "$2" ] || [ "$rule_name" != "$3" ]; then
+      return
+   else
+      uci delete openclash."$section" 2>/dev/null
+   fi
+}
 #写入代理集到配置文件
 yml_proxy_provider_set()
 {
@@ -134,6 +149,15 @@ cat >> "$SERVER_FILE" <<-EOF
 EOF
 }
 
+set_h2_host()
+{
+   if [ -z "$1" ]; then
+      return
+   fi
+cat >> "$SERVER_FILE" <<-EOF
+        - '$1'
+EOF
+}
 
 #写入服务器节点到配置文件
 yml_servers_set()
@@ -174,6 +198,8 @@ yml_servers_set()
    config_get "http_path" "$section" "http_path" ""
    config_get "keep_alive" "$section" "keep_alive" ""
    config_get "servername" "$section" "servername" ""
+   config_get "h2_path" "$section" "h2_path" ""
+   config_get "h2_host" "$section" "h2_host" ""
 
    if [ "$enabled" = "0" ]; then
       return
@@ -242,6 +268,10 @@ yml_servers_set()
    
    if [ "$obfs_vmess" = "http" ]; then
       obfs_vmess="network: http"
+   fi
+   
+   if [ "$obfs_vmess" = "h2" ]; then
+      obfs_vmess="network: h2"
    fi
    
    if [ ! -z "$custom" ] && [ "$type" = "vmess" ]; then
@@ -401,6 +431,20 @@ cat >> "$SERVER_FILE" <<-EOF
       headers:
         Connection:
           - keep-alive
+EOF
+         fi
+         
+         #h2
+         if [ ! -z "$h2_host" ] && [ "$obfs_vmess" = "network: h2" ]; then
+cat >> "$SERVER_FILE" <<-EOF
+    h2-opts:
+      host:
+EOF
+            config_list_foreach "$section" "h2_host" set_h2_host
+         fi
+         if [ ! -z "$h2_path" ] && [ "$obfs_vmess" = "network: h2" ]; then
+cat >> "$SERVER_FILE" <<-EOF
+      path: $h2_path
 EOF
          fi
       fi
@@ -589,7 +633,7 @@ rm -rf $proxy_provider_name
 rule_sources=$(uci get openclash.config.rule_sources 2>/dev/null)
 create_config=$(uci get openclash.config.create_config 2>/dev/null)
 echo "开始写入配置文件【$CONFIG_NAME】的服务器节点信息..." >$START_LOG
-echo "Proxy:" >$SERVER_FILE
+echo "proxies:" >$SERVER_FILE
 config_foreach yml_servers_set "servers"
 egrep '^ {0,}-' $SERVER_FILE |grep name: |awk -F 'name: ' '{print $2}' |sed 's/,.*//' 2>/dev/null >/tmp/Proxy_Server 2>&1
 if [ -s "/tmp/Proxy_Server" ]; then
@@ -676,13 +720,21 @@ cat >> "$SERVER_FILE" <<-EOF
 EOF
 fi
 cat /tmp/Proxy_Provider >> $SERVER_FILE 2>/dev/null
-${UCI_SET}rule_source="ConnersHua"
-${UCI_SET}GlobalTV="GlobalTV"
-${UCI_SET}AsianTV="AsianTV"
-${UCI_SET}Proxy="Proxy"
-${UCI_SET}AdBlock="AdBlock"
-${UCI_SET}Domestic="Domestic"
-${UCI_SET}Others="Others"
+config_load "openclash"
+config_foreach yml_other_rules_del "other_rules" "$CONFIG_NAME" "ConnersHua"
+uci_name_tmp=$(uci add openclash other_rules)
+uci_set="uci -q set openclash.$uci_name_tmp."
+${UCI_SET}rule_source="1"
+${uci_set}enable="1"
+${uci_set}rule_name="ConnersHua"
+${uci_set}config="$CONFIG_NAME"
+${uci_set}GlobalTV="GlobalTV"
+${uci_set}AsianTV="AsianTV"
+${uci_set}Proxy="Proxy"
+${uci_set}AdBlock="AdBlock"
+${uci_set}Domestic="Domestic"
+${uci_set}Others="Others"
+
 [ "$config_auto_update" -eq 1 ] && [ "$new_servers_group_set" -eq 1 ] && {
 	${UCI_SET}servers_update="1"
 	${UCI_DEL_LIST}="Auto - UrlTest" >/dev/null 2>&1 && ${UCI_ADD_LIST}="Auto - UrlTest" >/dev/null 2>&1
@@ -762,8 +814,23 @@ EOF
 fi
 cat /tmp/Proxy_Provider >> $SERVER_FILE 2>/dev/null
 cat >> "$SERVER_FILE" <<-EOF
+  - name: Disney
+    type: select
+    proxies:
+      - GlobalTV
+      - DIRECT
+EOF
+cat /tmp/Proxy_Server >> $SERVER_FILE 2>/dev/null
+if [ -f "/tmp/Proxy_Provider" ]; then
+cat >> "$SERVER_FILE" <<-EOF
+    use:
+EOF
+fi
+cat /tmp/Proxy_Provider >> $SERVER_FILE 2>/dev/null
+cat >> "$SERVER_FILE" <<-EOF
   - name: Youtube
     type: select
+    disable-udp: true
     proxies:
       - GlobalTV
       - DIRECT
@@ -879,22 +946,31 @@ cat >> "$SERVER_FILE" <<-EOF
 EOF
 fi
 cat /tmp/Proxy_Provider >> $SERVER_FILE 2>/dev/null
-${UCI_SET}rule_source="lhie1"
-${UCI_SET}GlobalTV="GlobalTV"
-${UCI_SET}AsianTV="AsianTV"
-${UCI_SET}Proxy="Proxy"
-${UCI_SET}Youtube="Youtube"
-${UCI_SET}Apple="Apple"
-${UCI_SET}Microsoft="Microsoft"
-${UCI_SET}Netflix="Netflix"
-${UCI_SET}Spotify="Spotify"
-${UCI_SET}Steam="Steam"
-${UCI_SET}AdBlock="AdBlock"
-${UCI_SET}Speedtest="Speedtest"
-${UCI_SET}Telegram="Telegram"
-${UCI_SET}PayPal="PayPal"
-${UCI_SET}Domestic="Domestic"
-${UCI_SET}Others="Others"
+config_load "openclash"
+config_foreach yml_other_rules_del "other_rules" "$CONFIG_NAME" "lhie1"
+uci_name_tmp=$(uci add openclash other_rules)
+uci_set="uci -q set openclash.$uci_name_tmp."
+${UCI_SET}rule_source="1"
+${uci_set}enable="1"
+${uci_set}rule_name="lhie1"
+${uci_set}config="$CONFIG_NAME"
+${uci_set}GlobalTV="GlobalTV"
+${uci_set}AsianTV="AsianTV"
+${uci_set}Proxy="Proxy"
+${uci_set}Youtube="Youtube"
+${uci_set}Apple="Apple"
+${uci_set}Microsoft="Microsoft"
+${uci_set}Netflix="Netflix"
+${uci_set}Disney="Disney"
+${uci_set}Spotify="Spotify"
+${uci_set}Steam="Steam"
+${uci_set}AdBlock="AdBlock"
+${uci_set}Speedtest="Speedtest"
+${uci_set}Telegram="Telegram"
+${uci_set}PayPal="PayPal"
+${uci_set}Domestic="Domestic"
+${uci_set}Others="Others"
+
 [ "$config_auto_update" -eq 1 ] && [ "$new_servers_group_set" -eq 1 ] && {
 	${UCI_SET}servers_update="1"
 	${UCI_DEL_LIST}="Auto - UrlTest" >/dev/null 2>&1 && ${UCI_ADD_LIST}="Auto - UrlTest" >/dev/null 2>&1
@@ -903,6 +979,7 @@ ${UCI_SET}Others="Others"
 	${UCI_DEL_LIST}="AsianTV" >/dev/null 2>&1 && ${UCI_ADD_LIST}="AsianTV" >/dev/null 2>&1
 	${UCI_DEL_LIST}="GlobalTV" >/dev/null 2>&1 && ${UCI_ADD_LIST}="GlobalTV" >/dev/null 2>&1
 	${UCI_DEL_LIST}="Netflix" >/dev/null 2>&1 && ${UCI_ADD_LIST}="Netflix" >/dev/null 2>&1
+	${UCI_DEL_LIST}="Disney" >/dev/null 2>&1 && ${UCI_ADD_LIST}="Disney" >/dev/null 2>&1
 	${UCI_DEL_LIST}="Spotify" >/dev/null 2>&1 && ${UCI_ADD_LIST}="Spotify" >/dev/null 2>&1
 	${UCI_DEL_LIST}="Steam" >/dev/null 2>&1 && ${UCI_ADD_LIST}="Steam" >/dev/null 2>&1
 	${UCI_DEL_LIST}="Telegram" >/dev/null 2>&1 && ${UCI_ADD_LIST}="Telegram" >/dev/null 2>&1
@@ -952,9 +1029,16 @@ cat >> "$SERVER_FILE" <<-EOF
       - Proxy
       - DIRECT
 EOF
-${UCI_SET}rule_source="ConnersHua_return"
-${UCI_SET}Proxy="Proxy"
-${UCI_SET}Others="Others"
+config_load "openclash"
+config_foreach yml_other_rules_del "other_rules" "$CONFIG_NAME" "ConnersHua_return"
+uci_name_tmp=$(uci add openclash other_rules)
+uci_set="uci -q set openclash.$uci_name_tmp."
+${UCI_SET}rule_source="1"
+${uci_set}enable="1"
+${uci_set}rule_name="ConnersHua_return"
+${uci_set}config="$CONFIG_NAME"
+${uci_set}Proxy="Proxy"
+${uci_set}Others="Others"
 [ "$config_auto_update" -eq 1 ] && [ "$new_servers_group_set" -eq 1 ] && {
 	${UCI_SET}servers_update="1"
 	${UCI_DEL_LIST}="Auto - UrlTest" >/dev/null 2>&1 && ${UCI_ADD_LIST}="Auto - UrlTest" >/dev/null 2>&1
@@ -970,40 +1054,23 @@ if [ "$create_config" != "0" ] && [ "$servers_if_update" != "1" ] && [ -z "$if_g
    /usr/share/openclash/yml_groups_get.sh >/dev/null 2>&1
 elif [ -z "$if_game_proxy" ]; then
    echo "服务器、代理集、策略组信息修改完成，正在更新配置文件【$CONFIG_NAME】..." >$START_LOG
-   #判断各个区位置
-   proxy_len=$(sed -n '/^Proxy:/=' "$CONFIG_FILE" 2>/dev/null)
-   group_len=$(sed -n '/^ \{0,\}proxy-groups:/=' "$CONFIG_FILE" 2>/dev/null)
-   provider_len=$(sed -n '/^proxy-providers:/=' "$CONFIG_FILE" 2>/dev/null)
-   if [ "$provider_len" -le "$proxy_len" ]; then
-      sed -i '/^ \{0,\}proxy-providers:/i\#change server#' "$CONFIG_FILE" 2>/dev/null
-      sed -i '/^ \{0,\}rules:/i\#change server end#' "$CONFIG_FILE" 2>/dev/null
-      sed -i '/^ \{0,\}proxy-providers:/,/#change server end#/d' "$CONFIG_FILE" 2>/dev/null
-   elif [ "$provider_len" -le "$group_len" ] && [ -z "$proxy_len" ]; then
-      sed -i '/^ \{0,\}proxy-providers:/i\#change server#' "$CONFIG_FILE" 2>/dev/null
-      sed -i '/^ \{0,\}rules:/i\#change server end#' "$CONFIG_FILE" 2>/dev/null
-      sed -i '/^ \{0,\}proxy-providers:/,/#change server end#/d' "$CONFIG_FILE" 2>/dev/null
-   elif [ "$provider_len" -ge "$group_len" ] && [ -z "$proxy_len" ]; then
-      sed -i '/^ \{0,\}proxy-groups:/i\#change server#' "$CONFIG_FILE" 2>/dev/null
-      sed -i '/^ \{0,\}rules:/i\#change server end#' "$CONFIG_FILE" 2>/dev/null
-      sed -i '/^ \{0,\}proxy-groups:/,/#change server end#/d' "$CONFIG_FILE" 2>/dev/null
+   config_hash=$(ruby -ryaml -E UTF-8 -e "Value = YAML.load_file('$CONFIG_FILE'); puts Value" 2>/dev/null)
+   if [ "$config_hash" != "false" ] && [ -n "$config_hash" ]; then
+      ruby_cover "$CONFIG_FILE" "['proxies']" "$SERVER_FILE" "['proxies']"
+      ruby_cover "$CONFIG_FILE" "['proxy-providers']" "$PROXY_PROVIDER_FILE" "['proxy-providers']"
+      ruby_cover "$CONFIG_FILE" "['proxy-groups']" "/tmp/yaml_groups.yaml" "['proxy-groups']"
    else
-      sed -i '/^ \{0,\}Proxy:/i\#change server#' "$CONFIG_FILE" 2>/dev/null
-   	  sed -i '/^ \{0,\}rules:/i\#change server end#' "$CONFIG_FILE" 2>/dev/null
-      sed -i '/^ \{0,\}Proxy:/,/#change server end#/d' "$CONFIG_FILE" 2>/dev/null
+      cat "$SERVER_FILE" "$PROXY_PROVIDER_FILE" "/tmp/yaml_groups.yaml" > "$CONFIG_FILE" 2>/dev/null
    fi
-
-   sed -i '/#change server#/r/tmp/yaml_groups.yaml' "$CONFIG_FILE" 2>/dev/null
-   sed -i '/#change server#/r/tmp/yaml_servers.yaml' "$CONFIG_FILE" 2>/dev/null
-   sed -i '/#change server#/r/tmp/yaml_provider.yaml' "$CONFIG_FILE" 2>/dev/null
-   sed -i '/#change server#/d' "$CONFIG_FILE" 2>/dev/null
 fi
-echo "配置文件【$CONFIG_NAME】写入完成！" >$START_LOG
-sleep 3
-echo "" >$START_LOG
+
 if [ -z "$if_game_proxy" ]; then
    rm -rf $SERVER_FILE 2>/dev/null
    rm -rf $PROXY_PROVIDER_FILE 2>/dev/null
    rm -rf /tmp/yaml_groups.yaml 2>/dev/null
+   echo "配置文件【$CONFIG_NAME】写入完成！" >$START_LOG
+   sleep 3
+   echo "" >$START_LOG
 fi
 rm -rf /tmp/Proxy_Server 2>/dev/null
 rm -rf /tmp/Proxy_Provider 2>/dev/null
